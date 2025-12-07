@@ -1,122 +1,143 @@
-import React, { useState, useEffect } from 'react';
-import GameCanvas from './components/GameCanvas';
-import { Menu, HUD, GameOver, Shop } from './components/UI';
-import { GameState, SKINS, Skin } from './constants';
-import { audioManager } from './utils/audio';
+import React, { useState } from 'react';
+import { Layers, Zap } from 'lucide-react';
+import { AppState } from './types';
+import { StepUpload } from './components/StepUpload';
+import { StepConfigure } from './components/StepConfigure';
+import { StepResult } from './components/StepResult';
+import { processImageWithGemini } from './services/geminiService';
+import { resizeImage } from './utils/imageUtils';
 
-export default function App() {
-  const [gameState, setGameState] = useState<GameState>(GameState.MENU);
-  const [score, setScore] = useState(0);
-  const [coins, setCoins] = useState(0); // Current run coins
-  const [highScore, setHighScore] = useState(() => parseInt(localStorage.getItem('neon_highscore') || '0'));
-  const [totalCoins, setTotalCoins] = useState(() => parseInt(localStorage.getItem('neon_coins') || '0'));
-  const [unlockedSkins, setUnlockedSkins] = useState<string[]>(() => JSON.parse(localStorage.getItem('neon_skins') || '["cyan"]'));
-  const [activeSkinId, setActiveSkinId] = useState(() => localStorage.getItem('neon_active_skin') || 'cyan');
-  const [soundEnabled, setSoundEnabled] = useState(true);
+const App: React.FC = () => {
+  const [state, setState] = useState<AppState>({
+    step: 'upload',
+    image: null,
+    targetWidth: 4,
+    targetHeight: 6,
+    backgroundColor: '#FFFFFF',
+    processedImage: null,
+    error: null,
+  });
 
-  // Persistence
-  useEffect(() => { localStorage.setItem('neon_highscore', highScore.toString()); }, [highScore]);
-  useEffect(() => { localStorage.setItem('neon_coins', totalCoins.toString()); }, [totalCoins]);
-  useEffect(() => { localStorage.setItem('neon_skins', JSON.stringify(unlockedSkins)); }, [unlockedSkins]);
-  useEffect(() => { localStorage.setItem('neon_active_skin', activeSkinId); }, [activeSkinId]);
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  const activeSkin = SKINS.find(s => s.id === activeSkinId) || SKINS[0];
-
-  const handleStartGame = () => {
-    setScore(0);
-    setCoins(0);
-    setGameState(GameState.PLAYING);
-    if(soundEnabled) audioManager.toggle(true);
+  const handleImageSelect = (base64: string) => {
+    setState(prev => ({ ...prev, image: base64, step: 'configure', error: null }));
   };
 
-  const handleGameOver = () => {
-    setGameState(GameState.GAME_OVER);
-    if (score > highScore) setHighScore(score);
-    setTotalCoins(prev => prev + coins);
-  };
+  const handleConvert = async (width: number, height: number, color: string) => {
+    if (!state.image) return;
 
-  const handleScoreUpdate = (newScore: number) => {
-    setScore(newScore);
-  };
+    setIsProcessing(true);
+    setState(prev => ({ ...prev, error: null }));
 
-  const handleCoinsUpdate = (amount: number) => {
-    setCoins(prev => prev + amount);
-  };
+    try {
+      // 1. Send to Gemini for Visual Processing (Background Removal + Enhancement)
+      console.log('Sending to Gemini...');
+      const geminiResultBase64 = await processImageWithGemini(state.image, color);
 
-  const handleBuySkin = (skin: Skin) => {
-    if (totalCoins >= skin.price) {
-      setTotalCoins(prev => prev - skin.price);
-      setUnlockedSkins(prev => [...prev, skin.id]);
+      // 2. Resize to exact inches locally (Canvas)
+      console.log('Resizing...');
+      const finalImage = await resizeImage(geminiResultBase64, width, height);
+
+      setState(prev => ({
+        ...prev,
+        processedImage: finalImage,
+        targetWidth: width,
+        targetHeight: height,
+        backgroundColor: color,
+        step: 'result'
+      }));
+    } catch (err: any) {
+      console.error(err);
+      setState(prev => ({ ...prev, error: err.message || "Something went wrong during processing." }));
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  const toggleSound = () => {
-    const newState = !soundEnabled;
-    setSoundEnabled(newState);
-    audioManager.toggle(newState);
+  const handleReset = () => {
+    setState({
+      step: 'upload',
+      image: null,
+      targetWidth: 4,
+      targetHeight: 6,
+      backgroundColor: '#FFFFFF',
+      processedImage: null,
+      error: null,
+    });
   };
 
   return (
-    <div className="relative w-full h-screen bg-[#020202] overflow-hidden flex justify-center">
-      {/* Main Game Container */}
-      <div className="relative w-full max-w-md h-full shadow-2xl overflow-hidden border-x border-white/5">
+    <div className="min-h-screen bg-[#0f172a] text-slate-100 flex flex-col">
+      {/* Header */}
+      <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
+              <Layers className="w-5 h-5" />
+            </div>
+            <h1 className="font-bold text-xl tracking-tight">Gemini Photo Studio</h1>
+          </div>
+          <div className="flex items-center gap-2 text-xs font-medium px-3 py-1 bg-blue-500/10 text-blue-400 rounded-full border border-blue-500/20">
+            <Zap className="w-3 h-3 fill-current" />
+            Powered by Gemini Nano
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col items-center justify-center p-6 relative overflow-hidden">
         
-        {/* The Game Layer */}
-        <GameCanvas
-          gameState={gameState}
-          setGameState={setGameState}
-          onScoreUpdate={handleScoreUpdate}
-          onCoinsUpdate={handleCoinsUpdate}
-          activeSkin={activeSkin}
-        />
+        {/* Decorative Background Elements */}
+        <div className="absolute top-10 left-10 w-64 h-64 bg-blue-600/10 rounded-full blur-[100px] pointer-events-none" />
+        <div className="absolute bottom-10 right-10 w-96 h-96 bg-purple-600/10 rounded-full blur-[120px] pointer-events-none" />
 
-        {/* UI Overlays */}
-        {gameState === GameState.MENU && (
-          <Menu
-            highScore={highScore}
-            totalCoins={totalCoins}
-            onPlay={handleStartGame}
-            onShop={() => setGameState(GameState.SHOP)}
-            soundEnabled={soundEnabled}
-            toggleSound={toggleSound}
-          />
-        )}
-
-        {gameState === GameState.PLAYING && (
-          <HUD score={score} coins={coins} onPause={() => setGameState(GameState.PAUSED)} />
-        )}
-
-        {gameState === GameState.PAUSED && (
-          <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center">
-             <div className="bg-[#111] border border-white/10 p-8 rounded-2xl flex flex-col gap-4 shadow-[0_0_30px_rgba(0,229,255,0.1)] w-64">
-                <h2 className="text-2xl font-bold text-center text-white tracking-widest uppercase mb-4">Paused</h2>
-                <button onClick={() => setGameState(GameState.PLAYING)} className="bg-cyan-500 hover:bg-cyan-400 text-black py-3 rounded-lg font-bold uppercase tracking-wider">Resume</button>
-                <button onClick={() => setGameState(GameState.MENU)} className="bg-white/5 hover:bg-white/10 text-white py-3 rounded-lg font-bold uppercase tracking-wider">Quit</button>
-             </div>
+        {/* Error Message */}
+        {state.error && (
+          <div className="mb-8 bg-red-500/10 border border-red-500/20 text-red-200 px-6 py-4 rounded-xl max-w-lg text-center animate-fade-in">
+            <p className="font-medium">Processing Error</p>
+            <p className="text-sm opacity-80 mt-1">{state.error}</p>
+            <button 
+              onClick={() => setState(s => ({ ...s, error: null }))} 
+              className="text-xs underline mt-2 hover:text-white"
+            >
+              Dismiss
+            </button>
           </div>
         )}
 
-        {gameState === GameState.GAME_OVER && (
-          <GameOver
-            score={score}
-            highScore={highScore}
-            earnedCoins={coins}
-            onRetry={handleStartGame}
-            onHome={() => setGameState(GameState.MENU)}
-          />
-        )}
+        {/* Dynamic Content based on Step */}
+        <div className="w-full z-10">
+          {state.step === 'upload' && (
+            <StepUpload onImageSelect={handleImageSelect} />
+          )}
 
-        {gameState === GameState.SHOP && (
-          <Shop
-            coins={totalCoins}
-            activeSkinId={activeSkinId}
-            unlockedSkins={unlockedSkins}
-            onBuy={handleBuySkin}
-            onEquip={(skin) => setActiveSkinId(skin.id)}
-            onClose={() => setGameState(GameState.MENU)}
-          />
-        )}
-      </div>
+          {state.step === 'configure' && state.image && (
+            <StepConfigure 
+              image={state.image} 
+              onConvert={handleConvert} 
+              onBack={() => setState(s => ({ ...s, step: 'upload' }))}
+              isProcessing={isProcessing}
+            />
+          )}
+
+          {state.step === 'result' && state.processedImage && (
+            <StepResult 
+              processedImage={state.processedImage} 
+              onReset={handleReset}
+              width={state.targetWidth}
+              height={state.targetHeight}
+            />
+          )}
+        </div>
+      </main>
+
+      {/* Footer */}
+      <footer className="py-6 text-center text-slate-600 text-sm">
+        <p>&copy; {new Date().getFullYear()} Gemini Photo Studio. Built with Google GenAI SDK.</p>
+      </footer>
     </div>
   );
-}
+};
+
+export default App;
